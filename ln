@@ -1,0 +1,178 @@
+-- jitcore -- implementation of coreutils ls
+-- roughly based on Obase
+-- https://github.com/chneukirchen/obase/blob/master/src/bin/ln/ln.c
+-- and busybox
+--
+local S = require "syscall"
+local h = require "syscall.helpers"
+local util = S.util
+local split = h.split
+local getopt = require "getopt"
+
+-- TODO: make this print to stderr
+function warn(...)
+  print(...)
+end
+
+function usage()
+  warn("usage:       [OPTIONS] TARGET... LINK|DIR\n\n" ..
+  "Create a link LINK or DIR/TARGET to the specified TARGET(s)\n"..
+  "\n	-s	symbolic - Make symlinks instead of hardlinks"..
+  "\n	-f	force - Remove existing destinations"..
+  "\n	-F	directory - Force directory hardlinks"..
+  "\n	-n	no-dereference - treat symlinks as normal files"..
+  "\n	-h	Same as -n"..
+  "\n	-b	Make a backup of the target (if exists) before link operation"..
+  "\n	-S suf	Use suffix instead of ~ when making backup files"..
+  "\n	-T	no-target-directory	2nd arg must not be a DIR"..
+  "\n	-L	--logical	dereference targets that are symbolik links"..
+  "\n	-P	--physical	hardlink directly to symbolic links"..
+  "\n	-R	--relative	create symbolic links relative to link location"..
+  "\n	-v	verbose"..
+  "\n	--help	This helpful message.")
+end
+-- long options we might need to implement
+--* interactive
+--* target-directory
+
+-- a little trick I learned from musl
+function realpath(path)
+  fd, err = S.open(path)
+  if not fd and err then
+    return nil, err
+  end
+  return S.readlink("/proc/self/fd/".. fd:getfd())
+end
+
+-- for absolute dirs A and B,
+-- give shortest relative path from A to B
+function relpath(from, target)
+  local src, err = realpath(util.dirname(from))
+  if not err then
+    from = src
+  end
+  local target, err = realpath(target)
+  if not target then
+    return nil, err
+  end
+  targetpath = split('/', target)
+  frompath = split('/', from)
+  local c = 0
+  local skip = 0
+  local ret = ''
+
+  t = {}
+  -- 0: find common prefix
+  for k, v in ipairs(targetpath) do
+    if frompath[k] == v then
+      skip = skip + 1
+    else
+      break
+    end
+  end
+  -- 1: delete common prefix
+  while skip ~= 0 do
+    table.remove(frompath, 1)
+    table.remove(targetpath, 1)
+    skip = skip -1
+  end
+  -- 2: descend to common parent
+  for k, v in ipairs(frompath) do
+    ret = ret .. '../'
+  end
+  -- 3: ascend to target
+  for k, v in ipairs(targetpath) do
+    ret = ret .. v .. "/"
+  end
+  -- 4: remove trailing slash
+  ret = string.sub(ret, 1, -2)
+  print('returning: ' .. ret)
+  return ret
+end
+
+
+function ln_main(arg)
+  local opt, rarg = getopt.getopt(arg, "St")
+
+  if opt.help then
+    usage()
+    S.exit(0)
+  end
+
+  if #rarg == 1 then
+    tgt = rarg[1]
+    src = util.basename(tgt)
+  elseif #rarg ~= 2 then
+    usage()
+  else
+    tgt = rarg[1]
+    src = rarg[2]
+  end
+
+  -- no-derefernce
+  local statf = S.stat
+  if opt.h or opt.n or opt['no-dereference'] then
+    local statf = S.lstat
+  end
+
+  local stat, err = statf(src)
+
+  -- linkfile or into dir
+  if not opt.T and not opt['no-target-directory'] and stat and stat.isdir then
+    src = src .. '/'.. util.basename(tgt)
+  end
+
+  if opt.v or opt.verbose then
+    print(src .. " -> " .. tgt)
+  end
+
+  -- suffix for backup files
+  local suf = opt.S or opt.suffix or '~'
+
+  -- backup
+  if opt.b or opt.backup then
+    if stat then
+      assert(S.rename(src, src..suf))
+    end
+  end
+
+  -- logical/pysical gnu extension
+  if opt.logical then
+    tgt, err = assert(S.readlink(tgt))
+  end
+
+  -- relative gnu extension. kill 1000 lines of gnuisms with one syscall
+  if opt.relative then
+    tgt = relpath(src, tgt)
+  end
+
+  -- force doesnt care about errors
+  if opt.f or opt.force then
+      S.unlink(src)
+  end
+
+  -- directory forcing for hardinks
+  if not opt.s and not opt.F then
+    local stat, err = assert(statf(tgt))
+    if stat.isdir then
+      warn("ln: '"..tgt .. "': hard link not allowed for directory")
+      S.exit(1)
+    end
+  end
+
+  -- symbolink?
+  local linkf = S.link
+  if opt.s or opt.symbolic then
+    linkf = S.symlink
+  end
+
+  local ret
+  ret, err = linkf(tgt, src)
+  if ret ~= 0 and err then
+    warn(err)
+    S.exit(1)
+  end
+  S.exit(0)
+end
+-- call our main function
+ln_main(arg)
