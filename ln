@@ -27,14 +27,18 @@ function usage(msg)
   "\n	-R	--relative	create symbolic links relative to link location"..
   "\n	-v	verbose"..
   "\n	--help	This helpful message.")
-  S.exit(1)
-end
 -- long options we might need to implement
 --* interactive
 --* target-directory
+  S.exit(1)
+end
 
 function warn(msg)
-	S.stderr:write('ln: '..msg .."\n")
+	S.stderr:write('ln: '..tostring(msg) .."\n")
+end
+function die(msg)
+	warn(msg)
+	S.exit(1)
 end
 
 -- a little trick I learned from musl
@@ -53,43 +57,36 @@ function relpath(from, target)
   if not err then
     from = src
   end
-  local target, err = realpath(util.dirname(target))
-  if not target then
-    return nil, err
-  end
+  local to, err = realpath(target)
+  if not to then die("'"..target.."': "..tostring(err))
+  else target = to end
   targetpath = split('/', target)
   frompath = split('/', from)
-  local skip = 0
-  local ret = ''
-
   -- 0: find common prefix
+  local skip = 0
   for k, v in ipairs(targetpath) do
     if frompath[k] == v then
       skip = skip + 1
     else
       break
     end
-  end
-  -- 1: delete common prefix
+  end -- 1: delete common prefix
   while skip ~= 0 do
-    print(table.remove(frompath, 1))
+    table.remove(frompath, 1)
     table.remove(targetpath, 1)
     skip = skip -1
-  end
-  -- 2: descend to common parent
+  end -- 2: descend to common parent
+  local ret = ''
   for k, v in ipairs(frompath) do
     ret = ret .. '../'
-  end
-  -- 3: ascend to target
+  end -- 3: ascend to target
   for k, v in ipairs(targetpath) do
     ret = ret .. v .. "/"
-  end
-  -- 4: remove trailing slash
+  end -- 4: remove trailing slash
   ret = string.sub(ret, 1, -2)
   print(ret)
   return ret
 end
-
 
 function ln_main(arg)
   local opt, rarg = getopt.getopt(arg, "St")
@@ -121,7 +118,6 @@ function ln_main(arg)
   if not opt.T and not opt['no-target-directory'] and stat and stat.isdir then
     src = src .. '/'.. util.basename(tgt)
   end
-
   if opt.v or opt.verbose then print(src .. " -> " .. tgt) end
 
   -- backup files with suffixes
@@ -131,40 +127,24 @@ function ln_main(arg)
       assert(S.rename(src, src..suf))
     end
   end
-
   -- logical/pysical gnu extension
   if opt.logical then tgt, err = assert(S.readlink(tgt)) end
-
   -- relative gnu extension. kill 1000 lines of gnuisms with one syscall
   if opt.relative then tgt = relpath(src, tgt) end
-
   -- force doesnt care about errors
   if opt.f or opt.force then S.unlink(src) end
-
   -- directory forcing for hardinks
   if not opt.s and not opt.F then
     local stat, err = statf(tgt)
-    if not stat and err then
-      print(err)
-      S.exit(0)
-    end
-
-    if stat.isdir then
-      warn("'"..tgt .. "': hard link not allowed for directory")
-      S.exit(1)
-    end
+    if not stat and err then die(err) end
+    if stat.isdir then die("'"..tgt .. "': hard link not allowed for directory") end
   end
-
   -- symbolink?
   local linkf = S.link
   if opt.s or opt.symbolic then linkf = S.symlink end
-
   local ret
   ret, err = linkf(tgt, src)
-  if ret ~= 0 and err then
-    warn(err)
-    S.exit(1)
-  end
+  if ret ~= 0 and err then die(err) end
   S.exit(0)
 end
 -- call our main function
