@@ -125,35 +125,42 @@ function ln_main(arg)
     local statf = S.lstat
   end
 
-  local stat, err = statf(src)
+  local srcstat, err = statf(src)
   -- linkfile or into dir
-  if not opt.T and not opt['no-target-directory'] and stat and stat.isdir then
+  if not opt.T and not opt['no-target-directory'] and srcstat and srcstat.isdir then
     src = src .. '/'.. util.basename(tgt)
   end
   if opt.v or opt.verbose then print(src .. " -> " .. tgt) end
 
+  local tgtstat, err = statf(tgt)
+  local linkf = S.link
+  if not opt.s and not opt.symbolic then
+    if opt.f or opt.force or opt.b or opt.backup then
+      -- if src==dest we'll force the wrong thing without this check
+      if not tgtstat and err then die(err) end
+      if tgtstat.st_ino == srcstat.st_ino and
+        tgtstat.st_dev == srcstat.st_dev and
+        (srcstat.st_nlink == 1 or util.basename(tgt) == util.basename(src)) then
+        die("'"..src .."' and '".. tgt .."' are the same file")
+      end
+    end
+    -- directory forcing for hardinks
+    if not opt.F then
+      if tgtstat and tgtstat.isdir then die("'"..tgt.."': hard link not allowed for directory") end
+    end
+  else linkf = S.symlink end
+
   -- backup files with suffixes
   local suf = opt.S or opt.suffix or '~'
   if opt.b or opt.backup then
-    if stat then
+    if srcstat then
       assert(S.rename(src, src..suf))
     end
   end
-  -- logical/pysical gnu extension
-  if opt.logical then tgt, err = assert(S.readlink(tgt)) end
   -- relative gnu extension. kill 1000 lines of gnuisms with one syscall
   if opt.r or opt.relative then tgt = relpath(src, tgt) end
   -- force doesnt care about errors
   if opt.f or opt.force then S.unlink(src) end
-  -- directory forcing for hardinks
-  if not opt.s and not opt.F then
-    local stat, err = statf(tgt)
-    if not stat and err then die(err) end
-    if stat.isdir then die("'"..tgt .. "': hard link not allowed for directory") end
-  end
-  -- symbolink?
-  local linkf = S.link
-  if opt.s or opt.symbolic then linkf = S.symlink end
   local ret
   ret, err = linkf(tgt, src)
   if ret ~= 0 and err then die(err) end
