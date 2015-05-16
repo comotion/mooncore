@@ -105,6 +105,19 @@ function ln_main(arg)
     tgt = rarg[1]
     src = rarg[2]
   end
+  -- positional args: if P comes after L, P overrides L, otherwise L
+  local logical = 0
+  for k,v in ipairs(arg) do
+    if v == '-L' or v == '--logical' then logical = 1
+    elseif logical == 1 and (v == '-P' or v == '--physical') then
+      opt.logical = nil; opt.L = nil
+    end
+  end
+  -- logical/pysical gnu extension
+  if opt.L or opt.logical then
+    tgt, err = S.readlink(tgt)
+    if err then die(err) end
+  end
 
   -- no-derefernce
   local statf = S.stat
