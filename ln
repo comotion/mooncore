@@ -24,7 +24,7 @@ function usage(msg)
   "\n	-T	no-target-directory	2nd arg must not be a DIR"..
   "\n	-L	--logical	dereference targets that are symbolik links"..
   "\n	-P	--physical	hardlink directly to symbolic links"..
-  "\n	-R	--relative	create symbolic links relative to link location"..
+  "\n	-r	--relative	create symbolic links relative to link location"..
   "\n	-v	verbose"..
   "\n	--help	This helpful message.")
 -- long options we might need to implement
@@ -91,7 +91,6 @@ end
 function ln_main(arg)
   local opt, rarg = getopt.getopt(arg, "St")
   local src, tgt
-
   if opt.help then
     usage()
   end
@@ -130,7 +129,7 @@ function ln_main(arg)
   -- logical/pysical gnu extension
   if opt.logical then tgt, err = assert(S.readlink(tgt)) end
   -- relative gnu extension. kill 1000 lines of gnuisms with one syscall
-  if opt.relative then tgt = relpath(src, tgt) end
+  if opt.r or opt.relative then tgt = relpath(src, tgt) end
   -- force doesnt care about errors
   if opt.f or opt.force then S.unlink(src) end
   -- directory forcing for hardinks
