@@ -30,6 +30,7 @@ function usage(msg)
 -- long options we might need to implement
 --* interactive
 --* target-directory
+-- multiple-file-form ln f1 f2 f3 f4 tdir
   S.exit(1)
 end
 
@@ -48,18 +49,34 @@ function realpath(path)
   return S.readlink("/proc/self/fd/".. fd:getfd())
 end
 
--- for absolute dirs A and B,
+-- for relative dirs A and B,
 -- give shortest relative path from A to B
+--
+-- ../../../ab/d/e= relpath(a/b/c, ab/d/e)
+--
+-- A or B may be absolute
+function absolute(path)
+  path = string.gsub(from, '//', '/')
+  if string.sub(path, 0, 1) == '/' then
+    return path
+  else
+    return assert(S.getcwd()) ..'/'.. path
+  end
+end
 function relpath(from, target)
-  from = string.gsub(from, "//", "/")
-  target = string.gsub(target, "//", "/")
+  from = absolute(from)
+  to = absolute(to)
   local src, err = realpath(util.dirname(from))
   if not err then
     from = src
   end
   local to, err = realpath(target)
-  if not to then die("'"..target.."': "..tostring(err))
-  else target = to end
+  if to then target = to
+  elseif not string.sub(target, 0, 1) == '/' then
+    target = './' .. target
+  end
+  --print('From:   '.. from)
+  --print('Target: '.. target)
   targetpath = split('/', target)
   frompath = split('/', from)
   -- 0: find common prefix
@@ -84,11 +101,10 @@ function relpath(from, target)
     ret = ret .. v .. "/"
   end -- 4: remove trailing slash
   ret = string.sub(ret, 1, -2)
-  print(ret)
   return ret
 end
 
-function ln_main(arg)
+function ln(arg)
   local opt, rarg = getopt.getopt(arg, "St")
   local src, tgt
   if opt.help then
@@ -113,16 +129,10 @@ function ln_main(arg)
       opt.logical = nil; opt.L = nil
     end
   end
-  -- logical/pysical gnu extension
-  if opt.L or opt.logical then
-    tgt, err = S.readlink(tgt)
-    if err then die(err) end
-  end
-
   -- no-derefernce
-  local statf = S.stat
+  local statf = S.lstat
   if opt.h or opt.n or opt['no-dereference'] then
-    local statf = S.lstat
+    local statf = S.stat
   end
 
   local srcstat, err = statf(src)
@@ -130,10 +140,8 @@ function ln_main(arg)
   if not opt.T and not opt['no-target-directory'] and srcstat and srcstat.isdir then
     src = src .. '/'.. util.basename(tgt)
   end
-  if opt.v or opt.verbose then print(src .. " -> " .. tgt) end
-
-  local tgtstat, err = statf(tgt)
-  local linkf = S.link
+  local tgtstat, err = S.lstat(tgt)
+  -- hard links
   if not opt.s and not opt.symbolic then
     if opt.f or opt.force or opt.b or opt.backup then
       -- if src==dest we'll force the wrong thing without this check
@@ -148,7 +156,17 @@ function ln_main(arg)
     if not opt.F then
       if tgtstat and tgtstat.isdir then die("'"..tgt.."': hard link not allowed for directory") end
     end
-  else linkf = S.symlink end
+  else
+    -- logical/pysical symlinks : gnu extension
+    if opt.L or opt.logical then
+      opt.logical = S.AT_SYMLINK_FOLLOW
+      if not opt.logical then opt.logical = 0x400 end
+      if tgtstat.islnk then
+        tgt, err = S.readlink(tgt)
+        if err then die(err) end
+      end
+    end
+  end
 
   -- backup files with suffixes
   local suf = opt.S or opt.suffix or '~'
@@ -162,9 +180,16 @@ function ln_main(arg)
   -- force doesnt care about errors
   if opt.f or opt.force then S.unlink(src) end
   local ret
-  ret, err = linkf(tgt, src)
+
+  if opt.s or opt.symbolic then
+    if opt.v or opt.verbose then print(src .. " -> " .. tgt) end
+    ret, err = S.symlink(tgt, src)
+  else
+    if opt.v or opt.verbose then print(src .. " => " .. tgt) end
+    ret, err = S.linkat(S.AT_FDCWD, tgt, S.AT_FDCWD, src, opt.logical)
+  end
   if ret ~= 0 and err then die(err) end
   S.exit(0)
 end
 -- call our main function
-ln_main(arg)
+ln(arg)
